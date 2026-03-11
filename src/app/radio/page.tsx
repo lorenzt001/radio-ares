@@ -88,6 +88,7 @@ export default function RadioPage() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const inputGainNodeRef = useRef<GainNode | null>(null);
   const processedTrackRef = useRef<MediaStreamTrack | null>(null);
+  const processedStreamRef = useRef<MediaStream | null>(null);
 
   const peersRef = useRef(new Map<number, RTCPeerConnection>());
   const audioElsRef = useRef(new Map<number, HTMLAudioElement>());
@@ -135,6 +136,7 @@ export default function RadioPage() {
     const dest = ctx.createMediaStreamDestination();
     source.connect(gainNode).connect(dest);
 
+    processedStreamRef.current = dest.stream;
     const track = dest.stream.getAudioTracks()[0];
     processedTrackRef.current = track;
     track.enabled = false;
@@ -148,6 +150,16 @@ export default function RadioPage() {
     }
 
     await refreshDevices();
+  }
+
+  async function activateAudio() {
+    if (!processedTrackRef.current) {
+      await ensureMic(micDeviceId);
+    }
+    const ctx = audioContextRef.current;
+    if (ctx && ctx.state !== "running") {
+      await ctx.resume().catch(() => null);
+    }
   }
 
   function closeAllPeers() {
@@ -191,8 +203,9 @@ export default function RadioPage() {
     peersRef.current.set(otherUserId, pc);
 
     const track = processedTrackRef.current;
+    const stream = processedStreamRef.current;
     if (track) {
-      pc.addTrack(track);
+      pc.addTrack(track, stream ?? new MediaStream([track]));
     }
 
     pc.onicecandidate = (ev) => {
@@ -214,6 +227,7 @@ export default function RadioPage() {
         const sinkable = el as SinkIdCapableAudio;
         await sinkable.setSinkId?.(outDeviceId).catch(() => null);
       }
+      await el.play().catch(() => null);
     };
 
     pc.onconnectionstatechange = () => {
@@ -380,6 +394,7 @@ export default function RadioPage() {
     function onKeyDown(e: KeyboardEvent) {
       if (e.code !== pttKey) return;
       if (e.repeat) return;
+      void activateAudio();
       setIsTalking(true);
     }
     function onKeyUp(e: KeyboardEvent) {
@@ -639,10 +654,16 @@ export default function RadioPage() {
 
             <div className="mt-6 flex items-center justify-center">
               <button
-                onMouseDown={() => setIsTalking(true)}
+                onMouseDown={() => {
+                  void activateAudio();
+                  setIsTalking(true);
+                }}
                 onMouseUp={() => setIsTalking(false)}
                 onMouseLeave={() => setIsTalking(false)}
-                onTouchStart={() => setIsTalking(true)}
+                onTouchStart={() => {
+                  void activateAudio();
+                  setIsTalking(true);
+                }}
                 onTouchEnd={() => setIsTalking(false)}
                 className={`h-44 w-44 rounded-full border text-sm font-semibold transition ${
                   isTalking
