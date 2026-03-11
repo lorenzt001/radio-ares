@@ -93,6 +93,13 @@ export default function RadioPage() {
   const peersRef = useRef(new Map<number, RTCPeerConnection>());
   const audioElsRef = useRef(new Map<number, HTMLAudioElement>());
 
+  const meIdRef = useRef<number | null>(null);
+  const selectedChannelIdRef = useRef<number | null>(null);
+
+  const openSoundRef = useRef<HTMLAudioElement | null>(null);
+  const closeSoundRef = useRef<HTMLAudioElement | null>(null);
+  const prevIsTalkingRef = useRef(false);
+
   const usersByChannel = useMemo(() => {
     const map = new Map<number, PresenceUser[]>();
     for (const u of users) {
@@ -103,6 +110,25 @@ export default function RadioPage() {
     }
     return map;
   }, [users]);
+
+  useEffect(() => {
+    meIdRef.current = me?.id ?? null;
+  }, [me?.id]);
+
+  useEffect(() => {
+    selectedChannelIdRef.current = selectedChannelId;
+  }, [selectedChannelId]);
+
+  useEffect(() => {
+    const open = new Audio("/suoni/apertura.mp3");
+    const close = new Audio("/suoni/chiusura.mp3");
+    open.preload = "auto";
+    close.preload = "auto";
+    open.volume = 0.9;
+    close.volume = 0.9;
+    openSoundRef.current = open;
+    closeSoundRef.current = close;
+  }, []);
 
   async function refreshDevices() {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -141,10 +167,23 @@ export default function RadioPage() {
     processedTrackRef.current = track;
     track.enabled = false;
 
-    for (const pc of peersRef.current.values()) {
-      for (const sender of pc.getSenders()) {
-        if (sender.track?.kind === "audio") {
-          await sender.replaceTrack(track);
+    for (const [otherUserId, pc] of peersRef.current) {
+      const audioSender = pc.getSenders().find((s) => s.track?.kind === "audio") ?? null;
+      if (audioSender) {
+        await audioSender.replaceTrack(track).catch(() => null);
+        continue;
+      }
+
+      pc.addTrack(track, dest.stream);
+
+      const meId = meIdRef.current;
+      const channelId = selectedChannelIdRef.current;
+      if (meId && channelId && meId < otherUserId) {
+        const offer = await pc.createOffer().catch(() => null);
+        if (!offer) continue;
+        await pc.setLocalDescription(offer).catch(() => null);
+        if (pc.localDescription) {
+          await sendSignal(channelId, otherUserId, "offer", pc.localDescription).catch(() => null);
         }
       }
     }
@@ -278,7 +317,9 @@ export default function RadioPage() {
     const signals = (json?.signals ?? []) as Signal[];
     for (const s of signals) {
       lastSignalId.current = Math.max(lastSignalId.current, Number(s.id));
-      await handleSignal(channelId, s);
+      try {
+        await handleSignal(channelId, s);
+      } catch {}
     }
   }
 
@@ -367,6 +408,19 @@ export default function RadioPage() {
   useEffect(() => {
     if (!processedTrackRef.current) return;
     processedTrackRef.current.enabled = isTalking;
+  }, [isTalking]);
+
+  useEffect(() => {
+    const prev = prevIsTalkingRef.current;
+    if (prev === isTalking) return;
+    prevIsTalkingRef.current = isTalking;
+
+    const el = isTalking ? openSoundRef.current : closeSoundRef.current;
+    if (!el) return;
+    try {
+      el.currentTime = 0;
+    } catch {}
+    void el.play().catch(() => null);
   }, [isTalking]);
 
   useEffect(() => {
