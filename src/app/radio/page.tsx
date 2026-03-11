@@ -105,6 +105,9 @@ export default function RadioPage() {
   const [pttKey, setPttKey] = useState<PttCode>("Space");
   const [capturingPtt, setCapturingPtt] = useState(false);
   const [isTalking, setIsTalking] = useState(false);
+  const [voxEnabled, setVoxEnabled] = useState(false);
+  const [voxThreshold, setVoxThreshold] = useState(0.12);
+  const [voxReleaseMs, setVoxReleaseMs] = useState(450);
 
   const [outputVolume, setOutputVolume] = useState(0.9);
   const [inputGain, setInputGain] = useState(1.0);
@@ -127,6 +130,7 @@ export default function RadioPage() {
   const authLostRef = useRef(false);
   const isTalkingRef = useRef(false);
   const talkRequestedRef = useRef(false);
+  const voxLastHighAtRef = useRef(0);
 
   const rawMicStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -669,6 +673,49 @@ export default function RadioPage() {
   useEffect(() => {
     isTalkingRef.current = isTalking;
   }, [isTalking]);
+
+  useEffect(() => {
+    if (!voxEnabled) return;
+    if (capturingPtt) return;
+    if (!selectedChannelId) return;
+    const levelPct = Math.min(1, Math.max(0, inputLevel * 3));
+    if (levelPct >= voxThreshold) {
+      voxLastHighAtRef.current = Date.now();
+      if (!talkRequestedRef.current) {
+        window.setTimeout(() => void startTalking(), 0);
+      }
+      return;
+    }
+    if (talkRequestedRef.current) {
+      const elapsed = Date.now() - (voxLastHighAtRef.current || 0);
+      if (elapsed > voxReleaseMs) {
+        window.setTimeout(() => stopTalking(), 0);
+      }
+    }
+  }, [voxEnabled, capturingPtt, selectedChannelId, inputLevel, voxThreshold, voxReleaseMs]);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    const ms = navigator.mediaSession;
+    try {
+      ms.metadata = new MediaMetadata({
+        title: "Radio Ares",
+        artist: "ARES 118",
+      });
+    } catch {}
+    try {
+      ms.setActionHandler("play", () => void startTalking());
+      ms.setActionHandler("pause", () => stopTalking());
+      ms.setActionHandler("stop", () => stopTalking());
+    } catch {}
+    return () => {
+      try {
+        ms.setActionHandler("play", null);
+        ms.setActionHandler("pause", null);
+        ms.setActionHandler("stop", null);
+      } catch {}
+    };
+  }, []);
 
   useEffect(() => {
     if (!processedTrackRef.current) return;
@@ -1294,6 +1341,63 @@ export default function RadioPage() {
                         </div>
                         <div className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
                           Premi “Scegli” e poi il tasto. Esc per annullare.
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-3xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/30">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-semibold">VOX</div>
+                        <button
+                          onClick={() => setVoxEnabled((v) => !v)}
+                          className={`h-9 rounded-2xl px-3 text-xs font-semibold ${
+                            voxEnabled
+                              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                              : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-white/10 dark:bg-black/30 dark:text-zinc-200 dark:hover:bg-white/10"
+                          }`}
+                        >
+                          {voxEnabled ? "Attivo" : "Disattivo"}
+                        </button>
+                      </div>
+
+                      <div className="mt-3 space-y-4">
+                        <div>
+                          <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
+                            <div>Soglia</div>
+                            <div>{Math.round(voxThreshold * 100)}%</div>
+                          </div>
+                          <input
+                            type="range"
+                            min={1}
+                            max={40}
+                            step={1}
+                            value={Math.round(voxThreshold * 100)}
+                            onChange={(e) => setVoxThreshold(Number(e.target.value) / 100)}
+                            className="mt-2 w-full"
+                            disabled={!voxEnabled}
+                          />
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
+                            <div>Rilascio</div>
+                            <div>{voxReleaseMs}ms</div>
+                          </div>
+                          <input
+                            type="range"
+                            min={150}
+                            max={1200}
+                            step={10}
+                            value={voxReleaseMs}
+                            onChange={(e) => setVoxReleaseMs(Number(e.target.value))}
+                            className="mt-2 w-full"
+                            disabled={!voxEnabled}
+                          />
+                        </div>
+
+                        <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                          Se attivo, trasmette automaticamente quando parli. Funziona anche senza
+                          premere tasti.
                         </div>
                       </div>
                     </div>
