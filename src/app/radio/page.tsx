@@ -29,6 +29,8 @@ type PeerStatus = {
   iceConnectionState: RTCIceConnectionState;
 };
 
+type RightPanelTab = "audio" | "utenti" | "diagnostica";
+
 type Signal = {
   id: number;
   fromUserId: number;
@@ -68,6 +70,13 @@ export default function RadioPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [peerStatus, setPeerStatus] = useState<Record<string, PeerStatus>>({});
+  const [rightTab, setRightTab] = useState<RightPanelTab>("audio");
+  const [inputLevel, setInputLevel] = useState(0);
+  const [engineStatus, setEngineStatus] = useState<{
+    audioContext: string;
+    beep: string;
+    micTrack: string;
+  }>({ audioContext: "n/a", beep: "n/a", micTrack: "n/a" });
 
   const [pttKey, setPttKey] = useState<PttCode>("Space");
   const [isTalking, setIsTalking] = useState(false);
@@ -80,6 +89,7 @@ export default function RadioPage() {
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
 
+  const [channelQuery, setChannelQuery] = useState("");
   const [newChannelName, setNewChannelName] = useState("");
   const [newUserName, setNewUserName] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
@@ -93,6 +103,7 @@ export default function RadioPage() {
   const rawMicStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const inputGainNodeRef = useRef<GainNode | null>(null);
+  const inputAnalyserRef = useRef<AnalyserNode | null>(null);
   const processedTrackRef = useRef<MediaStreamTrack | null>(null);
   const processedStreamRef = useRef<MediaStream | null>(null);
 
@@ -194,8 +205,14 @@ export default function RadioPage() {
     const gainNode = ctx.createGain();
     gainNode.gain.value = inputGain;
     inputGainNodeRef.current = gainNode;
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.8;
+    inputAnalyserRef.current = analyser;
     const dest = ctx.createMediaStreamDestination();
-    source.connect(gainNode).connect(dest);
+    source.connect(gainNode);
+    gainNode.connect(analyser);
+    analyser.connect(dest);
 
     processedStreamRef.current = dest.stream;
     const track = dest.stream.getAudioTracks()[0];
@@ -573,6 +590,37 @@ export default function RadioPage() {
   }, []);
 
   useEffect(() => {
+    const t = window.setInterval(() => {
+      const analyser = inputAnalyserRef.current;
+      if (!analyser) {
+        setInputLevel(0);
+        return;
+      }
+      const data = new Uint8Array(analyser.fftSize);
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const x = (data[i] - 128) / 128;
+        sum += x * x;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      setInputLevel(rms);
+    }, 80);
+    return () => window.clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    const t = window.setInterval(() => {
+      setEngineStatus({
+        audioContext: audioContextRef.current?.state ?? "n/a",
+        beep: beepContextRef.current?.state ?? "n/a",
+        micTrack: processedTrackRef.current?.readyState ?? "n/a",
+      });
+    }, 500);
+    return () => window.clearInterval(t);
+  }, []);
+
+  useEffect(() => {
     if (!processedTrackRef.current) return;
     processedTrackRef.current.enabled = isTalking;
   }, [isTalking]);
@@ -734,365 +782,604 @@ export default function RadioPage() {
   const connectedPeerCount = peerEntries.filter(
     ([, s]) => s.connectionState === "connected" || s.iceConnectionState === "connected",
   ).length;
+  const inputLevelPct = Math.min(1, Math.max(0, inputLevel * 3));
+  const filteredChannels =
+    channelQuery.trim().length === 0
+      ? channels
+      : channels.filter((c) => c.name.toLowerCase().includes(channelQuery.trim().toLowerCase()));
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-6 font-sans text-zinc-950 dark:bg-black dark:text-zinc-50">
-        <div className="text-sm text-zinc-600 dark:text-zinc-400">Caricamento…</div>
+      <div className="h-screen w-screen overflow-hidden bg-gradient-to-b from-zinc-50 via-zinc-50 to-zinc-100 font-sans text-zinc-950 dark:from-black dark:via-black dark:to-zinc-950 dark:text-zinc-50">
+        <div className="flex h-full w-full items-center justify-center px-6">
+          <div className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700 shadow-sm dark:border-white/10 dark:bg-zinc-950 dark:text-zinc-200">
+            <div className="h-2 w-2 rounded-full bg-emerald-500" />
+            Caricamento…
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50 font-sans text-zinc-950 dark:bg-black dark:text-zinc-50">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8">
-        <header className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-2xl bg-zinc-950 text-white dark:bg-white dark:text-black flex items-center justify-center text-sm font-semibold">
-              RA
-            </div>
-            <div>
-              <div className="text-sm font-semibold tracking-tight">Radio Ares</div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-400">
-                {me ? `${me.username} · ${me.role}` : "Offline"}
+    <div className="h-screen w-screen overflow-hidden bg-gradient-to-b from-zinc-50 via-zinc-50 to-zinc-100 font-sans text-zinc-950 dark:from-black dark:via-black dark:to-zinc-950 dark:text-zinc-50">
+      <div className="flex h-full w-full flex-col gap-4 p-4 lg:p-6">
+        <header className="shrink-0 rounded-3xl border border-zinc-200 bg-white/80 px-5 py-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-zinc-950/70">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-4">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-950 text-sm font-semibold text-white shadow-sm dark:bg-white dark:text-black">
+                RA
               </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => router.refresh()}
-              className="h-9 rounded-xl border border-zinc-200 px-3 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-white/10 dark:text-zinc-200 dark:hover:bg-white/10"
-            >
-              Refresh
-            </button>
-            <button
-              onClick={onLogout}
-              className="h-9 rounded-xl bg-zinc-950 px-3 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
-            >
-              Esci
-            </button>
-          </div>
-        </header>
-
-        {error ? (
-          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
-            {error}
-          </div>
-        ) : null}
-
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-zinc-950">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Radio</h2>
-              {me && canManageUsers(me.role) ? (
-                <div className="flex items-center gap-2">
-                  <input
-                    value={newChannelName}
-                    onChange={(e) => setNewChannelName(e.target.value)}
-                    placeholder="Nuovo canale"
-                    className="h-9 w-40 rounded-xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black dark:focus:border-white/30"
-                  />
-                  <button
-                    onClick={onCreateChannel}
-                    className="h-9 rounded-xl bg-zinc-950 px-3 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
-                  >
-                    Crea
-                  </button>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {channels.map((c) => {
-                const members = usersByChannel.get(c.id) ?? [];
-                const isSelected = c.id === selectedChannelId;
-                return (
-                  <div
-                    key={c.id}
-                    className={`rounded-2xl border p-3 ${
-                      isSelected
-                        ? "border-zinc-950 bg-zinc-50 dark:border-white/30 dark:bg-white/5"
-                        : "border-zinc-200 bg-white dark:border-white/10 dark:bg-zinc-950"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-medium">{c.name}</div>
-                        <div className="text-xs text-zinc-500 dark:text-zinc-400">
-                          {members.length} online
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => onJoin(c.id)}
-                        className={`h-9 rounded-xl px-3 text-xs font-medium ${
-                          isSelected
-                            ? "bg-zinc-950 text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
-                            : "border border-zinc-200 text-zinc-700 hover:bg-zinc-100 dark:border-white/10 dark:text-zinc-200 dark:hover:bg-white/10"
-                        }`}
-                      >
-                        {isSelected ? "Dentro" : "Entra"}
-                      </button>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {members.length ? (
-                        members.map((u) => (
-                          <div
-                            key={u.id}
-                            className="rounded-full border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700 dark:border-white/10 dark:bg-black dark:text-zinc-200"
-                          >
-                            {u.username}
-                          </div>
-                        ))
-                      ) : (
-                        <div className="text-xs text-zinc-500 dark:text-zinc-400">
-                          Nessuno collegato
-                        </div>
-                      )}
-                    </div>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold tracking-tight">Radio Ares</div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  <div className="truncate">{me ? `${me.username} · ${me.role}` : "Offline"}</div>
+                  <div className="text-zinc-300 dark:text-white/15">•</div>
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`h-2 w-2 rounded-full ${
+                        connectedPeerCount > 0 ? "bg-emerald-500" : "bg-amber-500"
+                      }`}
+                    />
+                    {connectedPeerCount > 0 ? "Connesso" : "In attesa"}
                   </div>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-zinc-950">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold">
-                {selectedChannel ? selectedChannel.name : "Nessuna radio"}
-              </h2>
-              <div
-                className={`text-xs ${
-                  isTalking ? "text-emerald-600 dark:text-emerald-400" : "text-zinc-500 dark:text-zinc-400"
-                }`}
-              >
-                {isTalking ? "Parlando" : "In ascolto"}
+                  <div className="text-zinc-300 dark:text-white/15">•</div>
+                  <div className="truncate">
+                    {selectedChannel ? `Canale: ${selectedChannel.name}` : "Canale: nessuno"}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="mt-6 flex items-center justify-center">
+            <div className="flex shrink-0 items-center gap-2">
               <button
-                onMouseDown={() => void startTalking()}
-                onMouseUp={() => stopTalking()}
-                onMouseLeave={() => stopTalking()}
-                onTouchStart={() => void startTalking()}
-                onTouchEnd={() => stopTalking()}
-                className={`h-44 w-44 rounded-full border text-sm font-semibold transition ${
-                  isTalking
-                    ? "border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                    : "border-zinc-200 bg-white text-zinc-950 hover:bg-zinc-100 dark:border-white/10 dark:bg-black dark:text-zinc-50 dark:hover:bg-white/10"
-                }`}
+                onClick={() => router.refresh()}
+                className="h-10 rounded-2xl border border-zinc-200 bg-white px-4 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-white/10 dark:bg-black/40 dark:text-zinc-200 dark:hover:bg-white/10"
               >
-                Tieni premuto
+                Refresh
+              </button>
+              <button
+                onClick={onLogout}
+                className="h-10 rounded-2xl bg-zinc-950 px-4 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
+              >
+                Esci
               </button>
             </div>
+          </div>
 
-            <div className="mt-6 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600 dark:border-white/10 dark:bg-black dark:text-zinc-400">
-              PTT: {PTT_OPTIONS.find((o) => o.code === pttKey)?.label}
+          {error ? (
+            <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+              {error}
+            </div>
+          ) : null}
+        </header>
+
+        <main className="grid min-h-0 flex-1 grid-cols-12 gap-4 overflow-y-auto lg:overflow-hidden">
+          <section className="col-span-12 min-h-0 lg:col-span-4 xl:col-span-3">
+            <div className="flex h-full flex-col overflow-hidden rounded-3xl border border-zinc-200 bg-white/80 shadow-sm backdrop-blur dark:border-white/10 dark:bg-zinc-950/70">
+              <div className="shrink-0 border-b border-zinc-200/70 p-4 dark:border-white/10">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold">Canali</div>
+                    <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                      {channels.length} totali · {users.length} utenti online
+                    </div>
+                  </div>
+                  {me && canManageUsers(me.role) ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={newChannelName}
+                        onChange={(e) => setNewChannelName(e.target.value)}
+                        placeholder="Nuovo canale"
+                        className="h-9 w-36 rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black/40 dark:focus:border-white/30"
+                      />
+                      <button
+                        onClick={onCreateChannel}
+                        className="h-9 rounded-2xl bg-zinc-950 px-3 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
+                      >
+                        Crea
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-3">
+                  <input
+                    value={channelQuery}
+                    onChange={(e) => setChannelQuery(e.target.value)}
+                    placeholder="Cerca canale…"
+                    className="h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black/40 dark:focus:border-white/30"
+                  />
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                <div className="space-y-3">
+                  {filteredChannels.map((c) => {
+                    const members = usersByChannel.get(c.id) ?? [];
+                    const isSelected = c.id === selectedChannelId;
+                    const dot =
+                      members.length === 0 ? "bg-zinc-300 dark:bg-white/20" : "bg-emerald-500";
+                    return (
+                      <div
+                        key={c.id}
+                        className={`rounded-3xl border p-4 transition ${
+                          isSelected
+                            ? "border-zinc-950 bg-zinc-50 shadow-sm dark:border-white/30 dark:bg-white/5"
+                            : "border-zinc-200 bg-white hover:bg-zinc-50 dark:border-white/10 dark:bg-zinc-950 dark:hover:bg-white/5"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <div className={`h-2.5 w-2.5 rounded-full ${dot}`} />
+                              <div className="truncate text-sm font-semibold">{c.name}</div>
+                            </div>
+                            <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                              {members.length} online
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => onJoin(c.id)}
+                            className={`h-10 shrink-0 rounded-2xl px-4 text-xs font-semibold ${
+                              isSelected
+                                ? "bg-zinc-950 text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
+                                : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-white/10 dark:bg-black/30 dark:text-zinc-200 dark:hover:bg-white/10"
+                            }`}
+                          >
+                            {isSelected ? "Dentro" : "Entra"}
+                          </button>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {members.length ? (
+                            members.slice(0, 8).map((u) => (
+                              <div
+                                key={u.id}
+                                className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] text-zinc-700 dark:border-white/10 dark:bg-black/40 dark:text-zinc-200"
+                              >
+                                {u.username}
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                              Nessuno collegato
+                            </div>
+                          )}
+                          {members.length > 8 ? (
+                            <div className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] text-zinc-500 dark:border-white/10 dark:bg-black/40 dark:text-zinc-400">
+                              +{members.length - 8}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {filteredChannels.length === 0 ? (
+                    <div className="rounded-3xl border border-zinc-200 bg-white p-6 text-center text-sm text-zinc-600 dark:border-white/10 dark:bg-zinc-950 dark:text-zinc-300">
+                      Nessun canale trovato
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </div>
           </section>
 
-          <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-zinc-950">
-            <h2 className="text-sm font-semibold">Impostazioni</h2>
+          <section className="col-span-12 min-h-0 lg:col-span-4 xl:col-span-6">
+            <div className="flex h-full flex-col overflow-hidden rounded-3xl border border-zinc-200 bg-white/80 shadow-sm backdrop-blur dark:border-white/10 dark:bg-zinc-950/70">
+              <div className="shrink-0 border-b border-zinc-200/70 p-4 dark:border-white/10">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold">
+                      {selectedChannel ? selectedChannel.name : "Nessuna radio selezionata"}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className={`h-2 w-2 rounded-full ${
+                            isTalking ? "bg-emerald-500" : "bg-zinc-300 dark:bg-white/20"
+                          }`}
+                        />
+                        {isTalking ? "Trasmissione attiva" : "In ascolto"}
+                      </div>
+                      <div className="text-zinc-300 dark:text-white/15">•</div>
+                      <div>
+                        Peers {connectedPeerCount}/{peerEntries.length}
+                      </div>
+                      <div className="text-zinc-300 dark:text-white/15">•</div>
+                      <div className="truncate">
+                        PTT: {PTT_OPTIONS.find((o) => o.code === pttKey)?.label}
+                      </div>
+                    </div>
+                  </div>
 
-            <div className="mt-4 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                    Volume uscita
+                  <div className="w-48 shrink-0">
+                    <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
+                      <div>Ingresso</div>
+                      <div>{Math.round(inputLevelPct * 100)}%</div>
+                    </div>
+                    <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-white/10">
+                      <div
+                        className={`h-full rounded-full ${
+                          isTalking ? "bg-emerald-500" : "bg-zinc-500 dark:bg-zinc-400"
+                        }`}
+                        style={{ width: `${Math.round(inputLevelPct * 100)}%` }}
+                      />
+                    </div>
                   </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={outputVolume}
-                    onChange={(e) => setOutputVolume(Number(e.target.value))}
-                    className="mt-2 w-full"
-                  />
-                </div>
-                <div>
-                  <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                    Volume entrata
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={2}
-                    step={0.01}
-                    value={inputGain}
-                    onChange={(e) => setInputGain(Number(e.target.value))}
-                    className="mt-2 w-full"
-                  />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                    Microfono
+              <div className="min-h-0 flex-1 p-6">
+                <div className="flex h-full flex-col items-center justify-between gap-6">
+                  <div className="grid w-full grid-cols-2 gap-3 lg:grid-cols-4">
+                    <div className="rounded-3xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/30">
+                      <div className="text-[11px] text-zinc-500 dark:text-zinc-400">Microfono</div>
+                      <div className="mt-1 truncate text-xs font-semibold">
+                        {audioInputs.find((d) => d.deviceId === micDeviceId)?.label || "Default"}
+                      </div>
+                    </div>
+                    <div className="rounded-3xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/30">
+                      <div className="text-[11px] text-zinc-500 dark:text-zinc-400">Uscita</div>
+                      <div className="mt-1 truncate text-xs font-semibold">
+                        {audioOutputs.find((d) => d.deviceId === outDeviceId)?.label || "Default"}
+                      </div>
+                    </div>
+                    <div className="rounded-3xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/30">
+                      <div className="text-[11px] text-zinc-500 dark:text-zinc-400">Volume</div>
+                      <div className="mt-1 text-xs font-semibold">
+                        Out {Math.round(outputVolume * 100)}% · In {Math.round(inputGain * 100)}%
+                      </div>
+                    </div>
+                    <div className="rounded-3xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/30">
+                      <div className="text-[11px] text-zinc-500 dark:text-zinc-400">Stato</div>
+                      <div className="mt-1 text-xs font-semibold">
+                        {connectedPeerCount > 0 ? "Online" : "In attesa"}
+                      </div>
+                    </div>
                   </div>
-                  <select
-                    value={micDeviceId ?? "default"}
-                    onChange={async (e) => {
-                      const id = e.target.value;
-                      setMicDeviceId(id);
-                      await ensureMic(id);
-                    }}
-                    className="mt-2 h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black dark:focus:border-white/30"
+
+                  <div className="flex w-full flex-1 items-center justify-center">
+                    <button
+                      disabled={!selectedChannelId}
+                      onMouseDown={() => void startTalking()}
+                      onMouseUp={() => stopTalking()}
+                      onMouseLeave={() => stopTalking()}
+                      onTouchStart={() => void startTalking()}
+                      onTouchEnd={() => stopTalking()}
+                      className={`group relative flex h-72 w-72 items-center justify-center rounded-full border text-sm font-semibold shadow-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                        isTalking
+                          ? "border-emerald-500 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+                          : "border-zinc-200 bg-white text-zinc-950 hover:bg-zinc-50 dark:border-white/10 dark:bg-black/30 dark:text-zinc-50 dark:hover:bg-white/10"
+                      }`}
+                    >
+                      <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_center,rgba(16,185,129,0.15),transparent_60%)] opacity-0 transition group-hover:opacity-100" />
+                      <div className="relative flex flex-col items-center gap-2">
+                        <div className="text-base font-bold">
+                          {selectedChannelId ? "Tieni premuto" : "Seleziona un canale"}
+                        </div>
+                        <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                          {isTalking ? "Trasmettendo…" : "Premi e parla"}
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+
+                  <div className="w-full rounded-3xl border border-zinc-200 bg-white p-4 text-xs text-zinc-600 dark:border-white/10 dark:bg-black/30 dark:text-zinc-300">
+                    Suggerimento: usa il tasto PTT configurato oppure tieni premuto il pulsante.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="col-span-12 min-h-0 lg:col-span-4 xl:col-span-3">
+            <div className="flex h-full flex-col overflow-hidden rounded-3xl border border-zinc-200 bg-white/80 shadow-sm backdrop-blur dark:border-white/10 dark:bg-zinc-950/70">
+              <div className="shrink-0 border-b border-zinc-200/70 p-4 dark:border-white/10">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold">Console</div>
+                    <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                      Audio · Utenti · Diagnostica
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 rounded-2xl border border-zinc-200 bg-white p-1 dark:border-white/10 dark:bg-black/30">
+                  <button
+                    onClick={() => setRightTab("audio")}
+                    className={`h-9 rounded-xl text-xs font-semibold ${
+                      rightTab === "audio"
+                        ? "bg-zinc-950 text-white dark:bg-white dark:text-black"
+                        : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-white/10"
+                    }`}
                   >
-                    <option value="default">Default</option>
-                    {audioInputs.map((d) => (
-                      <option key={d.deviceId} value={d.deviceId}>
-                        {d.label || `Mic ${d.deviceId.slice(0, 6)}`}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                    Uscita audio
-                  </div>
-                  <select
-                    value={outDeviceId ?? "default"}
-                    onChange={(e) => setOutDeviceId(e.target.value)}
-                    className="mt-2 h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 disabled:opacity-50 dark:border-white/10 dark:bg-black dark:focus:border-white/30"
-                    disabled={audioOutputs.length === 0}
+                    Audio
+                  </button>
+                  <button
+                    onClick={() => setRightTab("utenti")}
+                    className={`h-9 rounded-xl text-xs font-semibold ${
+                      rightTab === "utenti"
+                        ? "bg-zinc-950 text-white dark:bg-white dark:text-black"
+                        : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-white/10"
+                    }`}
                   >
-                    <option value="default">Default</option>
-                    {audioOutputs.map((d) => (
-                      <option key={d.deviceId} value={d.deviceId}>
-                        {d.label || `Out ${d.deviceId.slice(0, 6)}`}
-                      </option>
-                    ))}
-                  </select>
+                    Utenti
+                  </button>
+                  <button
+                    onClick={() => setRightTab("diagnostica")}
+                    className={`h-9 rounded-xl text-xs font-semibold ${
+                      rightTab === "diagnostica"
+                        ? "bg-zinc-950 text-white dark:bg-white dark:text-black"
+                        : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-white/10"
+                    }`}
+                  >
+                    Diagnostica
+                  </button>
                 </div>
               </div>
 
-              <div>
-                <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                  Tasto PTT
-                </div>
-                <select
-                  value={pttKey}
-                  onChange={(e) => setPttKey(e.target.value as PttCode)}
-                  className="mt-2 h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black dark:focus:border-white/30"
-                >
-                  {PTT_OPTIONS.map((o) => (
-                    <option key={o.code} value={o.code}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {me && canManageUsers(me.role) ? (
-                <div className="rounded-2xl border border-zinc-200 p-3 dark:border-white/10">
-                  <div className="text-xs font-semibold">Gestione utenti</div>
-                  <div className="mt-3 space-y-2">
-                    {users.map((u) => (
-                      <div key={u.id} className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="truncate text-xs font-medium">{u.username}</div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                {rightTab === "audio" ? (
+                  <div className="space-y-4">
+                    <div className="rounded-3xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/30">
+                      <div className="text-xs font-semibold">Volumi</div>
+                      <div className="mt-3 grid grid-cols-2 gap-4">
+                        <div>
                           <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                            {u.role}
+                            Uscita
                           </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={outputVolume}
+                            onChange={(e) => setOutputVolume(Number(e.target.value))}
+                            className="mt-2 w-full"
+                          />
+                        </div>
+                        <div>
+                          <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                            Entrata
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={2}
+                            step={0.01}
+                            value={inputGain}
+                            onChange={(e) => setInputGain(Number(e.target.value))}
+                            className="mt-2 w-full"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-3xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/30">
+                      <div className="text-xs font-semibold">Dispositivi</div>
+                      <div className="mt-3 grid grid-cols-1 gap-3">
+                        <div>
+                          <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                            Microfono
+                          </div>
+                          <select
+                            value={micDeviceId ?? "default"}
+                            onChange={async (e) => {
+                              const id = e.target.value;
+                              setMicDeviceId(id);
+                              await ensureMic(id);
+                            }}
+                            className="mt-2 h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black/40 dark:focus:border-white/30"
+                          >
+                            <option value="default">Default</option>
+                            {audioInputs.map((d) => (
+                              <option key={d.deviceId} value={d.deviceId}>
+                                {d.label || `Mic ${d.deviceId.slice(0, 6)}`}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                            Uscita audio
+                          </div>
+                          <select
+                            value={outDeviceId ?? "default"}
+                            onChange={(e) => setOutDeviceId(e.target.value)}
+                            className="mt-2 h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 disabled:opacity-50 dark:border-white/10 dark:bg-black/40 dark:focus:border-white/30"
+                            disabled={audioOutputs.length === 0}
+                          >
+                            <option value="default">Default</option>
+                            {audioOutputs.map((d) => (
+                              <option key={d.deviceId} value={d.deviceId}>
+                                {d.label || `Out ${d.deviceId.slice(0, 6)}`}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-3xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/30">
+                      <div className="text-xs font-semibold">PTT</div>
+                      <div className="mt-3">
+                        <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                          Tasto
                         </div>
                         <select
-                          value={u.currentChannelId ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            void onMoveUser(u.id, v ? Number(v) : null);
-                          }}
-                          className="h-9 w-40 rounded-xl border border-zinc-200 bg-white px-2 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black dark:focus:border-white/30"
+                          value={pttKey}
+                          onChange={(e) => setPttKey(e.target.value as PttCode)}
+                          className="mt-2 h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black/40 dark:focus:border-white/30"
                         >
-                          <option value="">Fuori</option>
-                          {channels.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
+                          {PTT_OPTIONS.map((o) => (
+                            <option key={o.code} value={o.code}>
+                              {o.label}
                             </option>
                           ))}
                         </select>
                       </div>
-                    ))}
-                  </div>
-
-                  {me && canCreatePrivilegedUsers(me.role) ? (
-                    <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-white/10">
-                      <div className="text-xs font-semibold">Crea utente</div>
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <input
-                          value={newUserName}
-                          onChange={(e) => setNewUserName(e.target.value)}
-                          placeholder="Username"
-                          className="h-10 rounded-xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black dark:focus:border-white/30"
-                        />
-                        <select
-                          value={newUserRole}
-                          onChange={(e) =>
-                            setNewUserRole(e.target.value === "user" ? "user" : "moderator")
-                          }
-                          className="h-10 rounded-xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black dark:focus:border-white/30"
-                        >
-                          <option value="moderator">moderator</option>
-                          <option value="user">user</option>
-                        </select>
-                        <input
-                          value={newUserPassword}
-                          onChange={(e) => setNewUserPassword(e.target.value)}
-                          placeholder="Password"
-                          type="password"
-                          className="h-10 rounded-xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black dark:focus:border-white/30"
-                        />
-                        <button
-                          onClick={onCreateUser}
-                          className="h-10 rounded-xl bg-zinc-950 px-3 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
-                        >
-                          Crea
-                        </button>
-                      </div>
-                      <div className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-500">
-                        L’utente moderator può spostare persone tra radio.
-                      </div>
                     </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              <button
-                onClick={async () => {
-                  setIsTalking(false);
-                  await ensureMic(micDeviceId);
-                }}
-                className="h-10 w-full rounded-xl border border-zinc-200 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-white/10 dark:text-zinc-200 dark:hover:bg-white/10"
-              >
-                Reinizializza audio
-              </button>
-
-              <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 text-[11px] text-zinc-600 dark:border-white/10 dark:bg-black dark:text-zinc-400">
-                <div className="flex items-center justify-between">
-                  <div>WebRTC peers</div>
-                  <div>
-                    {connectedPeerCount}/{peerEntries.length} connessi
                   </div>
-                </div>
-                {peerEntries.length ? (
-                  <div className="mt-2 space-y-1">
-                    {peerEntries.map(([uid, s]) => (
-                      <div key={uid} className="flex items-center justify-between">
-                        <div className="truncate">User {uid}</div>
-                        <div className="text-zinc-500 dark:text-zinc-500">
-                          {s.connectionState}/{s.iceConnectionState}
+                ) : null}
+
+                {rightTab === "utenti" ? (
+                  <div className="space-y-4">
+                    {me && canManageUsers(me.role) ? (
+                      <div className="rounded-3xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/30">
+                        <div className="text-xs font-semibold">Gestione utenti</div>
+                        <div className="mt-3 space-y-2">
+                          {users.map((u) => (
+                            <div
+                              key={u.id}
+                              className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white px-3 py-2 dark:border-white/10 dark:bg-black/30"
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate text-xs font-semibold">{u.username}</div>
+                                <div className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                                  {u.role}
+                                </div>
+                              </div>
+                              <select
+                                value={u.currentChannelId ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  void onMoveUser(u.id, v ? Number(v) : null);
+                                }}
+                                className="h-9 w-40 rounded-2xl border border-zinc-200 bg-white px-2 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black/40 dark:focus:border-white/30"
+                              >
+                                <option value="">Fuori</option>
+                                {channels.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+
+                        {me && canCreatePrivilegedUsers(me.role) ? (
+                          <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-white/10">
+                            <div className="text-xs font-semibold">Crea utente</div>
+                            <div className="mt-3 grid grid-cols-2 gap-2">
+                              <input
+                                value={newUserName}
+                                onChange={(e) => setNewUserName(e.target.value)}
+                                placeholder="Username"
+                                className="h-10 rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black/40 dark:focus:border-white/30"
+                              />
+                              <select
+                                value={newUserRole}
+                                onChange={(e) =>
+                                  setNewUserRole(e.target.value === "user" ? "user" : "moderator")
+                                }
+                                className="h-10 rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black/40 dark:focus:border-white/30"
+                              >
+                                <option value="moderator">moderator</option>
+                                <option value="user">user</option>
+                              </select>
+                              <input
+                                value={newUserPassword}
+                                onChange={(e) => setNewUserPassword(e.target.value)}
+                                placeholder="Password"
+                                type="password"
+                                className="h-10 rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black/40 dark:focus:border-white/30"
+                              />
+                              <button
+                                onClick={onCreateUser}
+                                className="h-10 rounded-2xl bg-zinc-950 px-3 text-xs font-semibold text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
+                              >
+                                Crea
+                              </button>
+                            </div>
+                            <div className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-500">
+                              Il moderator può spostare persone tra radio.
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="rounded-3xl border border-zinc-200 bg-white p-6 text-sm text-zinc-600 dark:border-white/10 dark:bg-black/30 dark:text-zinc-300">
+                        Permessi insufficienti
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+
+                {rightTab === "diagnostica" ? (
+                  <div className="space-y-4">
+                    <button
+                      onClick={async () => {
+                        stopTalking();
+                        await ensureMic(micDeviceId);
+                      }}
+                      className="h-11 w-full rounded-2xl border border-zinc-200 bg-white text-xs font-semibold text-zinc-700 hover:bg-zinc-100 dark:border-white/10 dark:bg-black/30 dark:text-zinc-200 dark:hover:bg-white/10"
+                    >
+                      Reinizializza audio
+                    </button>
+
+                    <div className="rounded-3xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/30">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-semibold">Motore audio</div>
+                        <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                          Ingresso {Math.round(inputLevelPct * 100)}%
                         </div>
                       </div>
-                    ))}
+                      <div className="mt-3 space-y-2 text-[11px] text-zinc-600 dark:text-zinc-300">
+                        <div className="flex items-center justify-between">
+                          <div>AudioContext</div>
+                          <div className="text-zinc-500 dark:text-zinc-400">
+                            {engineStatus.audioContext}
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div>Beep</div>
+                          <div className="text-zinc-500 dark:text-zinc-400">
+                            {engineStatus.beep}
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div>Mic track</div>
+                          <div className="text-zinc-500 dark:text-zinc-400">
+                            {engineStatus.micTrack}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-3xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/30">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-semibold">WebRTC peers</div>
+                        <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                          {connectedPeerCount}/{peerEntries.length} connessi
+                        </div>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {peerEntries.length ? (
+                          peerEntries.map(([uid, s]) => (
+                            <div
+                              key={uid}
+                              className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-[11px] text-zinc-700 dark:border-white/10 dark:bg-black/30 dark:text-zinc-200"
+                            >
+                              <div className="truncate">User {uid}</div>
+                              <div className="text-zinc-500 dark:text-zinc-400">
+                                {s.connectionState}/{s.iceConnectionState}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-[11px] text-zinc-500 dark:border-white/10 dark:bg-black/30 dark:text-zinc-400">
+                            Nessun peer
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                ) : (
-                  <div className="mt-2 text-zinc-500 dark:text-zinc-500">Nessun peer</div>
-                )}
+                ) : null}
               </div>
             </div>
           </section>
-        </div>
+        </main>
       </div>
     </div>
   );
