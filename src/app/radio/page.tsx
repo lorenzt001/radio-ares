@@ -24,6 +24,11 @@ type PresenceUser = {
   currentChannelId: number | null;
 };
 
+type PeerStatus = {
+  connectionState: RTCPeerConnectionState;
+  iceConnectionState: RTCIceConnectionState;
+};
+
 type Signal = {
   id: number;
   fromUserId: number;
@@ -62,6 +67,7 @@ export default function RadioPage() {
   const [selectedChannelId, setSelectedChannelId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [peerStatus, setPeerStatus] = useState<Record<string, PeerStatus>>({});
 
   const [pttKey, setPttKey] = useState<PttCode>("Space");
   const [isTalking, setIsTalking] = useState(false);
@@ -240,6 +246,13 @@ export default function RadioPage() {
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     });
     peersRef.current.set(otherUserId, pc);
+    setPeerStatus((prev) => ({
+      ...prev,
+      [String(otherUserId)]: {
+        connectionState: pc.connectionState,
+        iceConnectionState: pc.iceConnectionState,
+      },
+    }));
 
     const track = processedTrackRef.current;
     const stream = processedStreamRef.current;
@@ -270,9 +283,31 @@ export default function RadioPage() {
     };
 
     pc.onconnectionstatechange = () => {
+      setPeerStatus((prev) => ({
+        ...prev,
+        [String(otherUserId)]: {
+          connectionState: pc.connectionState,
+          iceConnectionState: pc.iceConnectionState,
+        },
+      }));
       if (pc.connectionState === "failed" || pc.connectionState === "closed") {
         peersRef.current.delete(otherUserId);
+        setPeerStatus((prev) => {
+          const next = { ...prev };
+          delete next[String(otherUserId)];
+          return next;
+        });
       }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      setPeerStatus((prev) => ({
+        ...prev,
+        [String(otherUserId)]: {
+          connectionState: pc.connectionState,
+          iceConnectionState: pc.iceConnectionState,
+        },
+      }));
     };
 
     return pc;
@@ -501,9 +536,12 @@ export default function RadioPage() {
     }, 700);
 
     const members = (usersByChannel.get(selectedChannelId) ?? []).filter((u) => u.id !== me.id);
-    void connectToChannelPeers(selectedChannelId, members);
+    const connectTimer = window.setTimeout(() => {
+      void connectToChannelPeers(selectedChannelId, members);
+    }, 0);
 
     return () => {
+      window.clearTimeout(connectTimer);
       if (pollTimer.current) window.clearInterval(pollTimer.current);
     };
   }, [me?.id, selectedChannelId]);
@@ -511,7 +549,10 @@ export default function RadioPage() {
   useEffect(() => {
     if (!me || !selectedChannelId) return;
     const members = usersByChannel.get(selectedChannelId) ?? [];
-    void connectToChannelPeers(selectedChannelId, members);
+    const connectTimer = window.setTimeout(() => {
+      void connectToChannelPeers(selectedChannelId, members);
+    }, 0);
+    return () => window.clearTimeout(connectTimer);
   }, [usersByChannel, me?.id, selectedChannelId]);
 
   useEffect(() => {
@@ -571,6 +612,10 @@ export default function RadioPage() {
   }
 
   const selectedChannel = channels.find((c) => c.id === selectedChannelId) ?? null;
+  const peerEntries = Object.entries(peerStatus);
+  const connectedPeerCount = peerEntries.filter(
+    ([, s]) => s.connectionState === "connected" || s.iceConnectionState === "connected",
+  ).length;
 
   if (loading) {
     return (
@@ -910,6 +955,29 @@ export default function RadioPage() {
               >
                 Reinizializza audio
               </button>
+
+              <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 text-[11px] text-zinc-600 dark:border-white/10 dark:bg-black dark:text-zinc-400">
+                <div className="flex items-center justify-between">
+                  <div>WebRTC peers</div>
+                  <div>
+                    {connectedPeerCount}/{peerEntries.length} connessi
+                  </div>
+                </div>
+                {peerEntries.length ? (
+                  <div className="mt-2 space-y-1">
+                    {peerEntries.map(([uid, s]) => (
+                      <div key={uid} className="flex items-center justify-between">
+                        <div className="truncate">User {uid}</div>
+                        <div className="text-zinc-500 dark:text-zinc-500">
+                          {s.connectionState}/{s.iceConnectionState}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-2 text-zinc-500 dark:text-zinc-500">Nessun peer</div>
+                )}
+              </div>
             </div>
           </section>
         </div>
