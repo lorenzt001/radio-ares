@@ -123,6 +123,9 @@ export default function RadioPage() {
   const stateTimer = useRef<number | null>(null);
   const pollTimer = useRef<number | null>(null);
   const lastSignalId = useRef(0);
+  const authLostRef = useRef(false);
+  const isTalkingRef = useRef(false);
+  const talkRequestedRef = useRef(false);
 
   const rawMicStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -294,6 +297,8 @@ export default function RadioPage() {
   }
 
   async function startTalking() {
+    if (talkRequestedRef.current) return;
+    talkRequestedRef.current = true;
     const seq = ++talkSeqRef.current;
     await activateAudio();
     if (talkSeqRef.current !== seq) return;
@@ -313,6 +318,8 @@ export default function RadioPage() {
   }
 
   function stopTalking() {
+    if (!talkRequestedRef.current) return;
+    talkRequestedRef.current = false;
     ++talkSeqRef.current;
     setIsTalking(false);
     playBeep("close");
@@ -333,6 +340,16 @@ export default function RadioPage() {
       } catch {}
       audioElsRef.current.delete(uid);
     }
+  }
+
+  function handleUnauthorized() {
+    if (authLostRef.current) return;
+    authLostRef.current = true;
+    if (stateTimer.current) window.clearInterval(stateTimer.current);
+    if (heartbeatTimer.current) window.clearInterval(heartbeatTimer.current);
+    if (pollTimer.current) window.clearInterval(pollTimer.current);
+    closeAllPeers();
+    router.replace("/login");
   }
 
   async function sendSignal(
@@ -517,6 +534,10 @@ export default function RadioPage() {
     const res = await fetch(`/api/signaling/poll?channelId=${channelId}&afterId=${afterId}`, {
       cache: "no-store",
     });
+    if (res.status === 401) {
+      handleUnauthorized();
+      return;
+    }
     if (!res.ok) return;
     const json = await res.json().catch(() => null);
     const signals = (json?.signals ?? []) as Signal[];
@@ -553,7 +574,7 @@ export default function RadioPage() {
     });
     const json = await res.json().catch(() => null);
     if (res.status === 401) {
-      router.replace("/login");
+      handleUnauthorized();
       return;
     }
     if (res.ok && json?.currentChannelId !== undefined && json.currentChannelId !== channelId) {
@@ -564,7 +585,7 @@ export default function RadioPage() {
   async function loadState() {
     const res = await fetch("/api/presence/state", { cache: "no-store" });
     if (res.status === 401) {
-      router.replace("/login");
+      handleUnauthorized();
       return;
     }
     const json = await res.json().catch(() => null);
@@ -643,6 +664,10 @@ export default function RadioPage() {
     }, 500);
     return () => window.clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    isTalkingRef.current = isTalking;
+  }, [isTalking]);
 
   useEffect(() => {
     if (!processedTrackRef.current) return;
