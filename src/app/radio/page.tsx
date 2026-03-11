@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 
 type UserRole = "owner" | "moderator" | "user";
@@ -874,8 +875,15 @@ export default function RadioPage() {
         <header className="shrink-0 rounded-3xl border border-zinc-200 bg-white/80 px-5 py-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-zinc-950/70">
           <div className="flex items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-4">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-950 text-sm font-semibold text-white shadow-sm dark:bg-white dark:text-black">
-                RA
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-white/10 dark:bg-white">
+                <Image
+                  src="/images/image.png"
+                  alt="ARES 118"
+                  width={36}
+                  height={36}
+                  className="h-9 w-9 object-contain"
+                  priority
+                />
               </div>
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold tracking-tight">Radio Ares</div>
