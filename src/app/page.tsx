@@ -53,7 +53,7 @@ export default function Home() {
         </div>
         <div className="mt-6 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
           {status === "error"
-            ? "Controlla le variabili DB_* e riprova."
+            ? "Controlla le variabili DB* e riprova."
             : "Ti sto portando nella schermata giusta."}
         </div>
       </main>
