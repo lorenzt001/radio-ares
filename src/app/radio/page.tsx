@@ -7,7 +7,8 @@ type UserRole = "owner" | "moderator" | "user";
 
 type Me = {
   id: number;
-  username: string;
+  nome: string | null;
+  cognome: string | null;
   role: UserRole;
   currentChannelId: number | null;
 };
@@ -19,7 +20,8 @@ type Channel = {
 
 type PresenceUser = {
   id: number;
-  username: string;
+  nome: string | null;
+  cognome: string | null;
   role: UserRole;
   currentChannelId: number | null;
 };
@@ -46,7 +48,7 @@ const PTT_OPTIONS = [
   { label: "Ctrl", code: "ControlLeft" },
 ] as const;
 
-type PttCode = (typeof PTT_OPTIONS)[number]["code"];
+type PttCode = string;
 
 type SinkIdCapableAudio = HTMLAudioElement & {
   setSinkId?: (sinkId: string) => Promise<void>;
@@ -58,6 +60,27 @@ function canManageUsers(role: UserRole): boolean {
 
 function canCreatePrivilegedUsers(role: UserRole): boolean {
   return role === "owner";
+}
+
+function displayName(u: { nome: string | null; cognome: string | null }): string {
+  const parts = [u.nome?.trim() ?? "", u.cognome?.trim() ?? ""].filter(Boolean);
+  return parts.length ? parts.join(" ") : "Senza nome";
+}
+
+function pttLabel(code: string): string {
+  for (const o of PTT_OPTIONS) {
+    if (o.code === code) return o.label;
+  }
+  if (code.startsWith("Key")) return code.slice(3);
+  if (code.startsWith("Digit")) return code.slice(5);
+  if (code === "Space") return "Spazio";
+  if (code === "ControlLeft") return "Ctrl (sx)";
+  if (code === "ControlRight") return "Ctrl (dx)";
+  if (code === "ShiftLeft") return "Shift (sx)";
+  if (code === "ShiftRight") return "Shift (dx)";
+  if (code === "AltLeft") return "Alt (sx)";
+  if (code === "AltRight") return "Alt (dx)";
+  return code;
 }
 
 export default function RadioPage() {
@@ -79,6 +102,7 @@ export default function RadioPage() {
   }>({ audioContext: "n/a", beep: "n/a", micTrack: "n/a" });
 
   const [pttKey, setPttKey] = useState<PttCode>("Space");
+  const [capturingPtt, setCapturingPtt] = useState(false);
   const [isTalking, setIsTalking] = useState(false);
 
   const [outputVolume, setOutputVolume] = useState(0.9);
@@ -648,11 +672,13 @@ export default function RadioPage() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      if (capturingPtt) return;
       if (e.code !== pttKey) return;
       if (e.repeat) return;
       void startTalking();
     }
     function onKeyUp(e: KeyboardEvent) {
+      if (capturingPtt) return;
       if (e.code !== pttKey) return;
       stopTalking();
     }
@@ -662,7 +688,23 @@ export default function RadioPage() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [pttKey]);
+  }, [pttKey, capturingPtt]);
+
+  useEffect(() => {
+    if (!capturingPtt) return;
+    function onKeyDown(e: KeyboardEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code === "Escape") {
+        setCapturingPtt(false);
+        return;
+      }
+      setPttKey(e.code);
+      setCapturingPtt(false);
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [capturingPtt]);
 
   useEffect(() => {
     if (!me) return;
@@ -802,7 +844,7 @@ export default function RadioPage() {
   }
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-gradient-to-b from-zinc-50 via-zinc-50 to-zinc-100 font-sans text-zinc-950 dark:from-black dark:via-black dark:to-zinc-950 dark:text-zinc-50">
+    <div className="relative h-screen w-screen overflow-hidden bg-gradient-to-b from-zinc-50 via-zinc-50 to-zinc-100 font-sans text-zinc-950 dark:from-black dark:via-black dark:to-zinc-950 dark:text-zinc-50">
       <div className="flex h-full w-full flex-col gap-4 p-4 lg:p-6">
         <header className="shrink-0 rounded-3xl border border-zinc-200 bg-white/80 px-5 py-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-zinc-950/70">
           <div className="flex items-center justify-between gap-4">
@@ -813,7 +855,7 @@ export default function RadioPage() {
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold tracking-tight">Radio Ares</div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-                  <div className="truncate">{me ? `${me.username} · ${me.role}` : "Offline"}</div>
+                  <div className="truncate">{me ? `${displayName(me)} · ${me.role}` : "Offline"}</div>
                   <div className="text-zinc-300 dark:text-white/15">•</div>
                   <div className="flex items-center gap-2">
                     <div
@@ -938,7 +980,7 @@ export default function RadioPage() {
                                 key={u.id}
                                 className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] text-zinc-700 dark:border-white/10 dark:bg-black/40 dark:text-zinc-200"
                               >
-                                {u.username}
+                                {displayName(u)}
                               </div>
                             ))
                           ) : (
@@ -987,9 +1029,7 @@ export default function RadioPage() {
                         Peers {connectedPeerCount}/{peerEntries.length}
                       </div>
                       <div className="text-zinc-300 dark:text-white/15">•</div>
-                      <div className="truncate">
-                        PTT: {PTT_OPTIONS.find((o) => o.code === pttKey)?.label}
-                      </div>
+                      <div className="truncate">PTT: {pttLabel(pttKey)}</div>
                     </div>
                   </div>
 
@@ -1203,20 +1243,25 @@ export default function RadioPage() {
                     <div className="rounded-3xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-black/30">
                       <div className="text-xs font-semibold">PTT</div>
                       <div className="mt-3">
-                        <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                          Tasto
+                        <div className="flex items-end justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                              Tasto selezionato
+                            </div>
+                            <div className="mt-1 truncate text-xs font-semibold">
+                              {pttLabel(pttKey)}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setCapturingPtt(true)}
+                            className="h-10 shrink-0 rounded-2xl bg-zinc-950 px-4 text-xs font-semibold text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
+                          >
+                            Scegli
+                          </button>
                         </div>
-                        <select
-                          value={pttKey}
-                          onChange={(e) => setPttKey(e.target.value as PttCode)}
-                          className="mt-2 h-10 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-xs outline-none focus:border-zinc-400 dark:border-white/10 dark:bg-black/40 dark:focus:border-white/30"
-                        >
-                          {PTT_OPTIONS.map((o) => (
-                            <option key={o.code} value={o.code}>
-                              {o.label}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                          Premi “Scegli” e poi il tasto. Esc per annullare.
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1234,7 +1279,7 @@ export default function RadioPage() {
                               className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white px-3 py-2 dark:border-white/10 dark:bg-black/30"
                             >
                               <div className="min-w-0">
-                                <div className="truncate text-xs font-semibold">{u.username}</div>
+                                <div className="truncate text-xs font-semibold">{displayName(u)}</div>
                                 <div className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
                                   {u.role}
                                 </div>
@@ -1381,6 +1426,28 @@ export default function RadioPage() {
           </section>
         </main>
       </div>
+      {capturingPtt ? (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 px-6 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-zinc-200 bg-white p-6 shadow-lg dark:border-white/10 dark:bg-zinc-950">
+            <div className="text-sm font-semibold">Scegli tasto PTT</div>
+            <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-300">
+              Premi ora il tasto che vuoi usare per parlare.
+            </div>
+            <div className="mt-4 rounded-2xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 dark:border-white/10 dark:bg-black/30 dark:text-zinc-200">
+              Attuale: {pttLabel(pttKey)}
+            </div>
+            <div className="mt-4 flex items-center justify-between">
+              <div className="text-[11px] text-zinc-500 dark:text-zinc-400">Esc per annullare</div>
+              <button
+                onClick={() => setCapturingPtt(false)}
+                className="h-10 rounded-2xl border border-zinc-200 bg-white px-4 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 dark:border-white/10 dark:bg-black/30 dark:text-zinc-200 dark:hover:bg-white/10"
+              >
+                Annulla
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

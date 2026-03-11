@@ -23,10 +23,12 @@ export async function POST(req: Request) {
 
     const passwordHash = hashPassword(password);
     const pool = getPool();
-    await pool.execute(
-      "INSERT INTO utenti_radio (username, password_hash, role, last_seen) VALUES (:username, :password_hash, :role, NOW())",
-      { username, password_hash: passwordHash, role },
-    );
+    const ruoli = role === "moderator" ? "Referente Operatori" : null;
+    await pool.execute("INSERT INTO users (username, password, ruoli, last_seen) VALUES (:u, :p, :r, NOW())", {
+      u: username,
+      p: passwordHash,
+      r: ruoli,
+    });
 
     return NextResponse.json({ ok: true });
   } catch (err) {

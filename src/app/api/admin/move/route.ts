@@ -26,7 +26,7 @@ export async function POST(req: Request) {
 
     const pool = getPool();
     await pool.execute(
-      "UPDATE utenti_radio SET current_channel_id = :channel_id WHERE id = :id",
+      "UPDATE users SET current_channel_id = :channel_id WHERE id = :id",
       { id: userId, channel_id: channelId },
     );
 

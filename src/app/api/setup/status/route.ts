@@ -6,7 +6,7 @@ export async function GET() {
   try {
     await ensureSchema();
     const pool = getPool();
-    const [rows] = await pool.execute("SELECT COUNT(*) AS c FROM utenti_radio");
+    const [rows] = await pool.execute("SELECT COUNT(*) AS c FROM users");
     const count = Number((rows as unknown as Array<{ c: number }>)[0]?.c ?? 0);
     return NextResponse.json({ ready: true, hasUsers: count > 0 });
   } catch (err) {

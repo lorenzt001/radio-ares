@@ -15,7 +15,7 @@ export async function POST(req: Request) {
     }
 
     const pool = getPool();
-    const [rows] = await pool.execute("SELECT COUNT(*) AS c FROM utenti_radio");
+    const [rows] = await pool.execute("SELECT COUNT(*) AS c FROM users");
     const count = Number((rows as unknown as Array<{ c: number }>)[0]?.c ?? 0);
     if (count > 0) {
       return NextResponse.json({ error: "ALREADY_SETUP" }, { status: 409 });
@@ -23,8 +23,8 @@ export async function POST(req: Request) {
 
     const passwordHash = hashPassword(password);
     const [result] = await pool.execute(
-      "INSERT INTO utenti_radio (username, password_hash, role, last_seen) VALUES (:username, :password_hash, 'owner', NOW())",
-      { username, password_hash: passwordHash },
+      "INSERT INTO users (username, password, ruoli, last_seen) VALUES (:username, :password, 'Gestore Sito WEB', NOW())",
+      { username, password: passwordHash },
     );
 
     const userId = Number((result as unknown as { insertId: number }).insertId);

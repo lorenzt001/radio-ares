@@ -15,21 +15,22 @@ export async function POST(req: Request) {
 
     const pool = getPool();
     const [rows] = await pool.execute(
-      "SELECT id, password_hash AS passwordHash FROM utenti_radio WHERE username = :username LIMIT 1",
+      "SELECT id, password FROM users WHERE username = :username LIMIT 1",
       { username },
     );
-    const row = (rows as unknown as Array<{ id: number; passwordHash: string }>)[0];
+    const row = (rows as unknown as Array<{ id: number; password: string }>)[0];
     if (!row) {
       return NextResponse.json({ error: "INVALID_CREDENTIALS" }, { status: 401 });
     }
 
-    const ok = verifyPassword(password, String(row.passwordHash));
+    const stored = String(row.password ?? "");
+    const ok = stored.includes("pbkdf2_sha256$") ? verifyPassword(password, stored) : stored === password;
     if (!ok) {
       return NextResponse.json({ error: "INVALID_CREDENTIALS" }, { status: 401 });
     }
 
     const userId = Number(row.id);
-    await pool.execute("UPDATE utenti_radio SET last_seen = NOW() WHERE id = :id", { id: userId });
+    await pool.execute("UPDATE users SET last_seen = NOW() WHERE id = :id", { id: userId });
 
     const session = await createSession(userId);
     await setSessionCookie(session);

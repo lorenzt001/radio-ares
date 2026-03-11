@@ -21,13 +21,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "INVALID_ROLE" }, { status: 400 });
     }
 
-    const pool = getPool();
-    await pool.execute("UPDATE utenti_radio SET role = :role WHERE id = :id", {
-      role,
-      id: userId,
-    });
-
-    return NextResponse.json({ ok: true });
+    void getPool();
+    void userId;
+    void role;
+    return NextResponse.json({ error: "NOT_SUPPORTED" }, { status: 400 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "ERROR";
     return NextResponse.json({ error: message }, { status: 500 });

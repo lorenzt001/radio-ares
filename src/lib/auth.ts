@@ -9,6 +9,8 @@ export type UserRole = "owner" | "moderator" | "user";
 export type SessionUser = {
   id: number;
   username: string;
+  nome: string | null;
+  cognome: string | null;
   role: UserRole;
   currentChannelId: number | null;
 };
@@ -58,6 +60,28 @@ function secureCookie(): boolean {
   return process.env.NODE_ENV === "production";
 }
 
+export function roleFromRuoli(ruoli: string | null | undefined): UserRole {
+  const v = String(ruoli ?? "").toLowerCase();
+  if (!v) return "user";
+
+  const owner = ["direttore ares 118", "vice direttore ares 118", "gestore sito web"];
+  for (const r of owner) {
+    if (v.includes(r)) return "owner";
+  }
+
+  const moderator = [
+    "referente emergenza",
+    "referente materiali",
+    "referente operatori",
+    "referente formazione",
+  ];
+  for (const r of moderator) {
+    if (v.includes(r)) return "moderator";
+  }
+
+  return "user";
+}
+
 export async function createSession(userId: number): Promise<string> {
   const token = crypto.randomBytes(32).toString("hex");
   const pool = getPool();
@@ -102,14 +126,16 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 
   const pool = getPool();
   const [rows] = await pool.execute(
-    "SELECT u.id, u.username, u.role, u.current_channel_id AS currentChannelId, s.expires_at AS expiresAt FROM sessions s JOIN utenti_radio u ON u.id = s.user_id WHERE s.id = :id LIMIT 1",
+    "SELECT u.id, u.username, u.nome, u.cognome, u.ruoli, u.current_channel_id AS currentChannelId, s.expires_at AS expiresAt FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = :id LIMIT 1",
     { id: token },
   );
 
   const row = (rows as unknown as Array<{
     id: number;
     username: string;
-    role: UserRole;
+    nome: string | null;
+    cognome: string | null;
+    ruoli: string | null;
     currentChannelId: number | null;
     expiresAt: string | Date;
   }>)[0];
@@ -125,7 +151,9 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   return {
     id: Number(row.id),
     username: String(row.username),
-    role: row.role as UserRole,
+    nome: row.nome === null ? null : String(row.nome),
+    cognome: row.cognome === null ? null : String(row.cognome),
+    role: roleFromRuoli(row.ruoli),
     currentChannelId: row.currentChannelId === null ? null : Number(row.currentChannelId),
   };
 }

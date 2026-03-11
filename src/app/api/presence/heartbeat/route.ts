@@ -17,12 +17,12 @@ export async function POST(req: Request) {
 
     const pool = getPool();
     await pool.execute(
-      "UPDATE utenti_radio SET last_seen = NOW(), current_channel_id = :channel_id WHERE id = :id",
+      "UPDATE users SET last_seen = NOW(), current_channel_id = :channel_id WHERE id = :id",
       { id: user.id, channel_id: channelId },
     );
 
     const [rows] = await pool.execute(
-      "SELECT current_channel_id AS currentChannelId FROM utenti_radio WHERE id = :id LIMIT 1",
+      "SELECT current_channel_id AS currentChannelId FROM users WHERE id = :id LIMIT 1",
       { id: user.id },
     );
     const currentChannelId =
