@@ -102,9 +102,13 @@ export default function RadioPage() {
   const meIdRef = useRef<number | null>(null);
   const selectedChannelIdRef = useRef<number | null>(null);
 
-  const openSoundRef = useRef<HTMLAudioElement | null>(null);
-  const closeSoundRef = useRef<HTMLAudioElement | null>(null);
-  const prevIsTalkingRef = useRef(false);
+  const beepContextRef = useRef<AudioContext | null>(null);
+  const beepOpenBufferRef = useRef<AudioBuffer | null>(null);
+  const beepCloseBufferRef = useRef<AudioBuffer | null>(null);
+  const beepGainRef = useRef<GainNode | null>(null);
+  const talkSeqRef = useRef(0);
+  const pendingIceRef = useRef(new Map<number, RTCIceCandidateInit[]>());
+  const reconnectAttemptsRef = useRef(new Map<number, { count: number; lastAt: number }>());
 
   const usersByChannel = useMemo(() => {
     const map = new Map<number, PresenceUser[]>();
@@ -126,14 +130,34 @@ export default function RadioPage() {
   }, [selectedChannelId]);
 
   useEffect(() => {
-    const open = new Audio("/suoni/apertura.mp3");
-    const close = new Audio("/suoni/chiusura.mp3");
-    open.preload = "auto";
-    close.preload = "auto";
-    open.volume = 0.9;
-    close.volume = 0.9;
-    openSoundRef.current = open;
-    closeSoundRef.current = close;
+    const ctx = new AudioContext();
+    const gain = ctx.createGain();
+    gain.gain.value = 0.5;
+    gain.connect(ctx.destination);
+    beepContextRef.current = ctx;
+    beepGainRef.current = gain;
+
+    async function load(url: string) {
+      const res = await fetch(url);
+      const buf = await res.arrayBuffer();
+      return await ctx.decodeAudioData(buf);
+    }
+
+    void load("/suoni/apertura.mp3")
+      .then((b) => {
+        beepOpenBufferRef.current = b;
+      })
+      .catch(() => null);
+
+    void load("/suoni/chiusura.mp3")
+      .then((b) => {
+        beepCloseBufferRef.current = b;
+      })
+      .catch(() => null);
+
+    return () => {
+      void ctx.close().catch(() => null);
+    };
   }, []);
 
   async function refreshDevices() {
@@ -143,11 +167,16 @@ export default function RadioPage() {
   }
 
   async function ensureMic(nextDeviceId: string | null) {
+    const audioConstraints: MediaTrackConstraints = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    };
+    if (nextDeviceId && nextDeviceId !== "default") {
+      audioConstraints.deviceId = { exact: nextDeviceId };
+    }
     const constraints: MediaStreamConstraints = {
-      audio:
-        nextDeviceId && nextDeviceId !== "default"
-          ? { deviceId: { exact: nextDeviceId } }
-          : true,
+      audio: audioConstraints,
       video: false,
     };
 
@@ -205,18 +234,58 @@ export default function RadioPage() {
     if (ctx && ctx.state !== "running") {
       await ctx.resume().catch(() => null);
     }
+    const beepCtx = beepContextRef.current;
+    if (beepCtx && beepCtx.state !== "running") {
+      await beepCtx.resume().catch(() => null);
+    }
+  }
+
+  function playBeep(kind: "open" | "close") {
+    const ctx = beepContextRef.current;
+    const gain = beepGainRef.current;
+    if (!ctx || !gain) return;
+    const buffer = kind === "open" ? beepOpenBufferRef.current : beepCloseBufferRef.current;
+    if (!buffer) return;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(gain);
+    src.start(0);
+  }
+
+  async function startTalking() {
+    const seq = ++talkSeqRef.current;
+    await activateAudio();
+    if (talkSeqRef.current !== seq) return;
+
+    const buffer = beepOpenBufferRef.current;
+    if (buffer) {
+      playBeep("open");
+      const delayMs = Math.min(500, Math.max(0, Math.round(buffer.duration * 1000)));
+      window.setTimeout(() => {
+        if (talkSeqRef.current !== seq) return;
+        setIsTalking(true);
+      }, delayMs);
+      return;
+    }
+
+    setIsTalking(true);
+  }
+
+  function stopTalking() {
+    ++talkSeqRef.current;
+    setIsTalking(false);
+    playBeep("close");
   }
 
   function closeAllPeers() {
     for (const [uid, pc] of peersRef.current) {
       try {
-        pc.ontrack = null;
-        pc.onicecandidate = null;
-        pc.onconnectionstatechange = null;
         pc.close();
       } catch {}
       peersRef.current.delete(uid);
     }
+    pendingIceRef.current.clear();
+    reconnectAttemptsRef.current.clear();
     for (const [uid, el] of audioElsRef.current) {
       try {
         el.srcObject = null;
@@ -243,7 +312,19 @@ export default function RadioPage() {
     if (existing) return existing;
 
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      iceServers: [
+        {
+          urls: [
+            "stun:stun.l.google.com:19302",
+            "stun:stun1.l.google.com:19302",
+            "stun:stun2.l.google.com:19302",
+            "stun:stun3.l.google.com:19302",
+            "stun:stun4.l.google.com:19302",
+            "stun:stun.cloudflare.com:3478",
+          ],
+        },
+      ],
+      iceCandidatePoolSize: 10,
     });
     peersRef.current.set(otherUserId, pc);
     setPeerStatus((prev) => ({
@@ -260,13 +341,15 @@ export default function RadioPage() {
       pc.addTrack(track, stream ?? new MediaStream([track]));
     }
 
-    pc.onicecandidate = (ev) => {
-      if (!ev.candidate) return;
-      void sendSignal(channelId, otherUserId, "ice", ev.candidate);
-    };
+    pc.addEventListener("icecandidate", (ev) => {
+      const e = ev as RTCPeerConnectionIceEvent;
+      if (!e.candidate) return;
+      void sendSignal(channelId, otherUserId, "ice", e.candidate);
+    });
 
-    pc.ontrack = async (ev) => {
-      const stream = ev.streams[0] ?? new MediaStream([ev.track]);
+    pc.addEventListener("track", (ev) => {
+      const e = ev as RTCTrackEvent;
+      const stream = e.streams[0] ?? new MediaStream([e.track]);
       let el = audioElsRef.current.get(otherUserId);
       if (!el) {
         el = new Audio();
@@ -277,12 +360,12 @@ export default function RadioPage() {
       el.volume = outputVolume;
       if (outDeviceId && "setSinkId" in el) {
         const sinkable = el as SinkIdCapableAudio;
-        await sinkable.setSinkId?.(outDeviceId).catch(() => null);
+        void sinkable.setSinkId?.(outDeviceId).catch(() => null);
       }
-      await el.play().catch(() => null);
-    };
+      void el.play().catch(() => null);
+    });
 
-    pc.onconnectionstatechange = () => {
+    pc.addEventListener("connectionstatechange", () => {
       setPeerStatus((prev) => ({
         ...prev,
         [String(otherUserId)]: {
@@ -297,10 +380,34 @@ export default function RadioPage() {
           delete next[String(otherUserId)];
           return next;
         });
+        if (pc.connectionState === "failed") {
+          const now = Date.now();
+          const prev = reconnectAttemptsRef.current.get(otherUserId) ?? { count: 0, lastAt: 0 };
+          const recent = now - prev.lastAt < 15000;
+          const next = { count: recent ? prev.count + 1 : 1, lastAt: now };
+          reconnectAttemptsRef.current.set(otherUserId, next);
+          if (next.count <= 3) {
+            const meId = meIdRef.current;
+            const activeChannelId = selectedChannelIdRef.current;
+            if (meId && activeChannelId && meId < otherUserId) {
+              void (async () => {
+                try {
+                  const pc2 = await createPeer(activeChannelId, otherUserId);
+                  const offer = await pc2.createOffer().catch(() => null);
+                  if (!offer) return;
+                  await pc2.setLocalDescription(offer).catch(() => null);
+                  if (pc2.localDescription) {
+                    await sendSignal(activeChannelId, otherUserId, "offer", pc2.localDescription);
+                  }
+                } catch {}
+              })();
+            }
+          }
+        }
       }
-    };
+    });
 
-    pc.oniceconnectionstatechange = () => {
+    pc.addEventListener("iceconnectionstatechange", () => {
       setPeerStatus((prev) => ({
         ...prev,
         [String(otherUserId)]: {
@@ -308,7 +415,7 @@ export default function RadioPage() {
           iceConnectionState: pc.iceConnectionState,
         },
       }));
-    };
+    });
 
     return pc;
   }
@@ -319,26 +426,48 @@ export default function RadioPage() {
 
     if (s.kind === "offer") {
       const pc = await createPeer(channelId, s.fromUserId);
-      await pc.setRemoteDescription(new RTCSessionDescription(s.payload as RTCSessionDescriptionInit));
+      if (pc.signalingState !== "stable") {
+        await pc.setLocalDescription({ type: "rollback" }).catch(() => null);
+      }
+      await pc.setRemoteDescription(
+        new RTCSessionDescription(s.payload as RTCSessionDescriptionInit),
+      );
+      const pending = pendingIceRef.current.get(s.fromUserId) ?? [];
+      pendingIceRef.current.delete(s.fromUserId);
+      for (const c of pending) {
+        await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => null);
+      }
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      await sendSignal(channelId, s.fromUserId, "answer", answer);
+      await sendSignal(channelId, s.fromUserId, "answer", pc.localDescription ?? answer);
       return;
     }
 
     if (s.kind === "answer") {
       const pc = peersRef.current.get(s.fromUserId);
       if (!pc) return;
-      await pc.setRemoteDescription(new RTCSessionDescription(s.payload as RTCSessionDescriptionInit));
+      await pc.setRemoteDescription(
+        new RTCSessionDescription(s.payload as RTCSessionDescriptionInit),
+      );
+      const pending = pendingIceRef.current.get(s.fromUserId) ?? [];
+      pendingIceRef.current.delete(s.fromUserId);
+      for (const c of pending) {
+        await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => null);
+      }
       return;
     }
 
     if (s.kind === "ice") {
       const pc = peersRef.current.get(s.fromUserId);
       if (!pc) return;
-      await pc
-        .addIceCandidate(new RTCIceCandidate(s.payload as RTCIceCandidateInit))
-        .catch(() => null);
+      const candidateInit = s.payload as RTCIceCandidateInit;
+      if (!pc.remoteDescription) {
+        const list = pendingIceRef.current.get(s.fromUserId) ?? [];
+        list.push(candidateInit);
+        pendingIceRef.current.set(s.fromUserId, list);
+        return;
+      }
+      await pc.addIceCandidate(new RTCIceCandidate(candidateInit)).catch(() => null);
     }
   }
 
@@ -365,9 +494,12 @@ export default function RadioPage() {
       if (peersRef.current.has(other.id)) continue;
       if (me.id < other.id) {
         const pc = await createPeer(channelId, other.id);
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await sendSignal(channelId, other.id, "offer", offer);
+        const offer = await pc.createOffer().catch(() => null);
+        if (!offer) continue;
+        await pc.setLocalDescription(offer).catch(() => null);
+        await sendSignal(channelId, other.id, "offer", pc.localDescription ?? offer).catch(
+          () => null,
+        );
       }
     }
   }
@@ -446,19 +578,6 @@ export default function RadioPage() {
   }, [isTalking]);
 
   useEffect(() => {
-    const prev = prevIsTalkingRef.current;
-    if (prev === isTalking) return;
-    prevIsTalkingRef.current = isTalking;
-
-    const el = isTalking ? openSoundRef.current : closeSoundRef.current;
-    if (!el) return;
-    try {
-      el.currentTime = 0;
-    } catch {}
-    void el.play().catch(() => null);
-  }, [isTalking]);
-
-  useEffect(() => {
     if (!inputGainNodeRef.current) return;
     inputGainNodeRef.current.gain.value = inputGain;
   }, [inputGain]);
@@ -483,12 +602,11 @@ export default function RadioPage() {
     function onKeyDown(e: KeyboardEvent) {
       if (e.code !== pttKey) return;
       if (e.repeat) return;
-      void activateAudio();
-      setIsTalking(true);
+      void startTalking();
     }
     function onKeyUp(e: KeyboardEvent) {
       if (e.code !== pttKey) return;
-      setIsTalking(false);
+      stopTalking();
     }
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -753,17 +871,11 @@ export default function RadioPage() {
 
             <div className="mt-6 flex items-center justify-center">
               <button
-                onMouseDown={() => {
-                  void activateAudio();
-                  setIsTalking(true);
-                }}
-                onMouseUp={() => setIsTalking(false)}
-                onMouseLeave={() => setIsTalking(false)}
-                onTouchStart={() => {
-                  void activateAudio();
-                  setIsTalking(true);
-                }}
-                onTouchEnd={() => setIsTalking(false)}
+                onMouseDown={() => void startTalking()}
+                onMouseUp={() => stopTalking()}
+                onMouseLeave={() => stopTalking()}
+                onTouchStart={() => void startTalking()}
+                onTouchEnd={() => stopTalking()}
                 className={`h-44 w-44 rounded-full border text-sm font-semibold transition ${
                   isTalking
                     ? "border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
