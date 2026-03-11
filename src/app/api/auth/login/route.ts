@@ -15,7 +15,7 @@ export async function POST(req: Request) {
 
     const pool = getPool();
     const [rows] = await pool.execute(
-      "SELECT id, password_hash AS passwordHash FROM users WHERE username = :username LIMIT 1",
+      "SELECT id, password_hash AS passwordHash FROM utenti_radio WHERE username = :username LIMIT 1",
       { username },
     );
     const row = (rows as unknown as Array<{ id: number; passwordHash: string }>)[0];
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     }
 
     const userId = Number(row.id);
-    await pool.execute("UPDATE users SET last_seen = NOW() WHERE id = :id", { id: userId });
+    await pool.execute("UPDATE utenti_radio SET last_seen = NOW() WHERE id = :id", { id: userId });
 
     const session = await createSession(userId);
     await setSessionCookie(session);

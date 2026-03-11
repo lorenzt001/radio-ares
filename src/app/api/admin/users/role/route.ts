@@ -22,7 +22,7 @@ export async function POST(req: Request) {
     }
 
     const pool = getPool();
-    await pool.execute("UPDATE users SET role = :role WHERE id = :id", {
+    await pool.execute("UPDATE utenti_radio SET role = :role WHERE id = :id", {
       role,
       id: userId,
     });
@@ -33,4 +33,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
-

@@ -24,7 +24,7 @@ export async function POST(req: Request) {
     const passwordHash = hashPassword(password);
     const pool = getPool();
     await pool.execute(
-      "INSERT INTO users (username, password_hash, role, last_seen) VALUES (:username, :password_hash, :role, NOW())",
+      "INSERT INTO utenti_radio (username, password_hash, role, last_seen) VALUES (:username, :password_hash, :role, NOW())",
       { username, password_hash: passwordHash, role },
     );
 

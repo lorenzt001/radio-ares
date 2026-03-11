@@ -102,7 +102,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 
   const pool = getPool();
   const [rows] = await pool.execute(
-    "SELECT u.id, u.username, u.role, u.current_channel_id AS currentChannelId, s.expires_at AS expiresAt FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = :id LIMIT 1",
+    "SELECT u.id, u.username, u.role, u.current_channel_id AS currentChannelId, s.expires_at AS expiresAt FROM sessions s JOIN utenti_radio u ON u.id = s.user_id WHERE s.id = :id LIMIT 1",
     { id: token },
   );
 

@@ -26,7 +26,7 @@ export async function POST(req: Request) {
 
     const pool = getPool();
     await pool.execute(
-      "UPDATE users SET current_channel_id = :channel_id WHERE id = :id",
+      "UPDATE utenti_radio SET current_channel_id = :channel_id WHERE id = :id",
       { id: userId, channel_id: channelId },
     );
 
@@ -37,4 +37,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: message }, { status });
   }
 }
-

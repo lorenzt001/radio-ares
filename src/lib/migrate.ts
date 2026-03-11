@@ -26,7 +26,7 @@ export async function ensureSchema(): Promise<void> {
       PRIMARY KEY (id),
       UNIQUE KEY uniq_channels_name (name),
       KEY idx_channels_created_by (created_by),
-      CONSTRAINT fk_channels_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+      CONSTRAINT fk_channels_created_by FOREIGN KEY (created_by) REFERENCES utenti_radio(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
@@ -39,7 +39,7 @@ export async function ensureSchema(): Promise<void> {
       PRIMARY KEY (id),
       KEY idx_sessions_user_id (user_id),
       KEY idx_sessions_expires_at (expires_at),
-      CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES utenti_radio(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
@@ -57,8 +57,8 @@ export async function ensureSchema(): Promise<void> {
       KEY idx_signals_to_user_id (to_user_id),
       KEY idx_signals_created_at (created_at),
       CONSTRAINT fk_signals_channel FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
-      CONSTRAINT fk_signals_from_user FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE CASCADE,
-      CONSTRAINT fk_signals_to_user FOREIGN KEY (to_user_id) REFERENCES users(id) ON DELETE CASCADE
+      CONSTRAINT fk_signals_from_user FOREIGN KEY (from_user_id) REFERENCES utenti_radio(id) ON DELETE CASCADE,
+      CONSTRAINT fk_signals_to_user FOREIGN KEY (to_user_id) REFERENCES utenti_radio(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 }

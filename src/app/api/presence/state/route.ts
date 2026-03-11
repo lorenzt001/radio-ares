@@ -20,7 +20,7 @@ export async function GET() {
     }));
 
     const [userRows] = await pool.execute(
-      "SELECT id, username, role, current_channel_id AS currentChannelId FROM users WHERE last_seen IS NOT NULL AND last_seen > DATE_SUB(NOW(), INTERVAL 20 SECOND) ORDER BY username ASC",
+      "SELECT id, username, role, current_channel_id AS currentChannelId FROM utenti_radio WHERE last_seen IS NOT NULL AND last_seen > DATE_SUB(NOW(), INTERVAL 20 SECOND) ORDER BY username ASC",
     );
     const users = (userRows as unknown as Array<{
       id: number;
@@ -35,7 +35,7 @@ export async function GET() {
     }));
 
     const [meRow] = await pool.execute(
-      "SELECT current_channel_id AS currentChannelId, role FROM users WHERE id = :id LIMIT 1",
+      "SELECT current_channel_id AS currentChannelId, role FROM utenti_radio WHERE id = :id LIMIT 1",
       { id: me.id },
     );
     const meDb = (meRow as unknown as Array<{ currentChannelId: number | null; role: string }>)[0];
