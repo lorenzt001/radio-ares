@@ -12,7 +12,7 @@ export async function GET() {
 
     const pool = getPool();
     const [channelRows] = await pool.execute(
-      "SELECT id, name FROM channels ORDER BY name ASC",
+      "SELECT id, name FROM channels ORDER BY id ASC",
     );
     const channels = (channelRows as unknown as Array<{ id: number; name: string }>).map((c) => ({
       id: Number(c.id),
