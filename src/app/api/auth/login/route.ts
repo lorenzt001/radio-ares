@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
-import { createSession, setSessionCookie, verifyPassword } from "@/lib/auth";
+import { createSession, setSessionCookie, sha256Hex, verifyPassword } from "@/lib/auth";
 import { ensureSchema } from "@/lib/migrate";
 
 export async function POST(req: Request) {
@@ -24,7 +24,12 @@ export async function POST(req: Request) {
     }
 
     const stored = String(row.password ?? "");
-    const ok = stored.includes("pbkdf2_sha256$") ? verifyPassword(password, stored) : stored === password;
+    const sha256Like = /^[a-f0-9]{64}$/i.test(stored);
+    const ok = stored.includes("pbkdf2_sha256$")
+      ? verifyPassword(password, stored)
+      : sha256Like
+        ? sha256Hex(password).toLowerCase() === stored.toLowerCase()
+        : stored === password;
     if (!ok) {
       return NextResponse.json({ error: "INVALID_CREDENTIALS" }, { status: 401 });
     }

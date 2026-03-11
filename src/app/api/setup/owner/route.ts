@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
-import { hashPassword, createSession, setSessionCookie } from "@/lib/auth";
+import { createSession, setSessionCookie, sha256Hex } from "@/lib/auth";
 import { ensureSchema } from "@/lib/migrate";
 
 export async function POST(req: Request) {
@@ -21,7 +21,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "ALREADY_SETUP" }, { status: 409 });
     }
 
-    const passwordHash = hashPassword(password);
+    const passwordHash = sha256Hex(password);
     const [result] = await pool.execute(
       "INSERT INTO users (username, password, ruoli, last_seen) VALUES (:username, :password, 'Gestore Sito WEB', NOW())",
       { username, password: passwordHash },

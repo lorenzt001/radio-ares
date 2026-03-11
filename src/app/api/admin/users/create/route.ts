@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
-import { canCreatePrivilegedUsers, hashPassword, requireSessionUser } from "@/lib/auth";
+import { canCreatePrivilegedUsers, requireSessionUser, sha256Hex } from "@/lib/auth";
 import { ensureSchema } from "@/lib/migrate";
 
 export async function POST(req: Request) {
@@ -21,7 +21,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "INVALID_INPUT" }, { status: 400 });
     }
 
-    const passwordHash = hashPassword(password);
+    const passwordHash = sha256Hex(password);
     const pool = getPool();
     const ruoli = role === "moderator" ? "Referente Operatori" : null;
     await pool.execute("INSERT INTO users (username, password, ruoli, last_seen) VALUES (:u, :p, :r, NOW())", {

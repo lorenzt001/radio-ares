@@ -56,6 +56,10 @@ export function verifyPassword(password: string, stored: string): boolean {
   return crypto.timingSafeEqual(expected, hash);
 }
 
+export function sha256Hex(input: string): string {
+  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
+}
+
 function secureCookie(): boolean {
   return process.env.NODE_ENV === "production";
 }
